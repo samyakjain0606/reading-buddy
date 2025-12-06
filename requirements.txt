@@ -1,0 +1,4 @@
+python-telegram-bot
+claude-agent-sdk
+python-dotenv
+pytz
