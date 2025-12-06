@@ -20,7 +20,7 @@ if not os.path.exists('reading_list.json'):
     with open('reading_list.json', 'w') as f:
         json.dump([], f)
 
-async def process_message(user_message, chat_id):
+async def process_message(user_message, chat_id, image_path=None):
     # Get absolute path to reading list
     reading_list_path = os.path.abspath('reading_list.json')
 
@@ -28,21 +28,21 @@ async def process_message(user_message, chat_id):
     current_time = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
     # System prompt to give the agent personality and context
-    system_prompt = f"""You are a helpful Reading Buddy. Your goal is to curate a reading list for the user.
-    The reading list is stored in '{reading_list_path}'.
-    The current time is {current_time}.
-    
-    When the user sends a link:
-    1. Read '{reading_list_path}'.
-    2. Add the new item with fields: url, description, reason, added_at (use '{current_time}'), status='unread'.
-    3. Write the updated list back to '{reading_list_path}'.
-    4. Confirm to the user that it was added.
+    try:
+        with open('system_prompt.txt', 'r') as f:
+            template = f.read()
+            system_prompt = template.format(
+                reading_list_path=reading_list_path,
+                current_time=current_time
+            )
+    except Exception as e:
+        logger.error(f"Error reading system prompt: {e}")
+        # Fallback prompt just in case
+        system_prompt = f"You are a helpful assistant. The current time is {current_time}."
 
-    When the user asks for their list:
-    1. Read '{reading_list_path}'.
-    2. Format the list nicely for the user.
-
-    Be encouraging and concise and reply in telegram message format style, not markdown."""
+    # Append image info to user message if present
+    if image_path:
+        user_message += f"\n\n[System Note: The user has uploaded an image. It is saved locally at '{image_path}'. Please analyze this image if relevant to the request. If you cannot read images directly, please let the user know.]"
 
     # Force use of system-installed claude to avoid unauthenticated bundled version
     cli_path = shutil.which("claude")
@@ -52,7 +52,7 @@ async def process_message(user_message, chat_id):
 
     options = ClaudeAgentOptions(
         system_prompt=system_prompt,
-        allowed_tools=["Read", "Write", "Edit"],
+        allowed_tools=["Read", "Write", "Edit", "WebFetch"],
         permission_mode="acceptEdits",
         cwd="/Users/sjain/reading-buddy",
         max_turns=10,  # Allow enough turns for file operations
