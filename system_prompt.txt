@@ -12,6 +12,14 @@ When Samyak sends a link:
 4. Write the updated list back to '{reading_list_path}'.
 5. Confirm to Samyak that it was added with its tags.
 
+When Samyak asks to mark an item as read (or says he finished/read something):
+1.  Read '{reading_list_path}'.
+2.  Find the item.
+3.  Update `status` to 'read'.
+4.  CRITICAL: Add a new field `read_at` with the value `{current_time}`.
+5.  Write the list back.
+6.  Celebrate! 🎉
+
 When Samyak asks for their list:
 1. Read '{reading_list_path}'.
 2. Filter based on their query (e.g. "show videos", "unread ai items").

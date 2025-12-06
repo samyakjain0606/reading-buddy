@@ -4,6 +4,7 @@ import json
 import datetime
 import pytz
 import random
+from collections import Counter
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, ContextTypes, CommandHandler, MessageHandler, filters
@@ -28,6 +29,43 @@ def save_config(config):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(config, f, indent=2)
 
+def calculate_streak(dates_strings):
+    """Calculates current streak of consecutive days from a list of date strings."""
+    if not dates_strings:
+        return 0
+    
+    # Parse dates and notify time info to get just date objects
+    dates = set()
+    for ds in dates_strings:
+        try:
+            # Handle ISO format with possible Z or timezone
+            dt = datetime.datetime.fromisoformat(ds.replace('Z', '+00:00'))
+            dates.add(dt.date())
+        except ValueError:
+            continue
+            
+    if not dates:
+        return 0
+        
+    sorted_dates = sorted(list(dates), reverse=True)
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    
+    current_streak = 0
+    check_date = today
+    
+    # Check if today is present, if not check yesterday (streak might be active but not incremented today yet)
+    if check_date not in sorted_dates:
+        check_date = today - datetime.timedelta(days=1)
+        if check_date not in sorted_dates:
+            return 0 # Streak broken or not started
+            
+    # Count backwards
+    while check_date in sorted_dates:
+        current_streak += 1
+        check_date -= datetime.timedelta(days=1)
+        
+    return current_streak
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     config = load_config()
@@ -36,6 +74,72 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_config(config)
         
     await context.bot.send_message(chat_id=chat_id, text="I'm your Reading Buddy! Send me links or notes.")
+
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    try:
+        if not os.path.exists('reading_list.json'):
+             await context.bot.send_message(chat_id=chat_id, text="No reading list found yet!")
+             return
+
+        with open('reading_list.json', 'r') as f:
+            reading_list = json.load(f)
+            
+        total_items = len(reading_list)
+        read_count = sum(1 for item in reading_list if item.get('status') == 'read')
+        unread_count = total_items - read_count
+        
+        # Tags stats
+        all_tags = []
+        for item in reading_list:
+            all_tags.extend(item.get('tags', []))
+        
+        top_tags = Counter(all_tags).most_common(5)
+        tags_str = "\n".join([f"#{tag} ({count})" for tag, count in top_tags])
+        
+        msg = (
+            f"📊 **My Library Stats**\n\n"
+            f"📚 Total Items: {total_items}\n"
+            f"✅ Read: {read_count}\n"
+            f"📖 To Read: {unread_count}\n\n"
+            f"🏷️ **Top Topics:**\n{tags_str}"
+        )
+        await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error in stats: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="Oops, couldn't calculate stats right now.")
+
+async def streak_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    try:
+        if not os.path.exists('reading_list.json'):
+             await context.bot.send_message(chat_id=chat_id, text="No reading list found yet!")
+             return
+
+        with open('reading_list.json', 'r') as f:
+            reading_list = json.load(f)
+            
+        # Collection Streak (based on added_at)
+        added_dates = [item.get('added_at') for item in reading_list if item.get('added_at')]
+        collection_streak = calculate_streak(added_dates)
+        
+        # Reading Streak (based on read_at)
+        read_dates = [item.get('read_at') for item in reading_list if item.get('read_at')]
+        reading_streak = calculate_streak(read_dates)
+        
+        msg = (
+            f"🔥 **Streaks**\n\n"
+            f"📖 **Reading Streak:** {reading_streak} days\n"
+            f"_(Days you finished an article)_\n\n"
+            f"📥 **Collection Streak:** {collection_streak} days\n"
+            f"_(Days you added new stuff)_"
+        )
+        await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error in streak: {e}")
+        await context.bot.send_message(chat_id=chat_id, text="Oops, couldn't calculate streaks right now.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -120,10 +224,15 @@ if __name__ == '__main__':
     application = Application.builder().token(token).build()
     
     start_handler = CommandHandler('start', start)
+    stats_handler = CommandHandler('stats', stats_command)
+    streak_handler = CommandHandler('streak', streak_command)
+    
     # Allow text AND photos
     message_handler = MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), handle_message)
     
     application.add_handler(start_handler)
+    application.add_handler(stats_handler)
+    application.add_handler(streak_handler)
     application.add_handler(message_handler)
     
     # Schedule morning message
