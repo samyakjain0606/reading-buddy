@@ -34,10 +34,8 @@ graph TB
     end
 
     subgraph "Core Engine"
-        GATEWAY[🚪 Gateway Layer]
-        AGENT[🧠 Gemi Agent Core<br/>Claude Agent SDK]
-        ROUTER[🔀 Intent Router]
-        ORCHESTRATOR[🎭 Task Orchestrator]
+        GATEWAY[🚪 Gateway Layer<br/>FastAPI]
+        AGENT[🧠 Gemi Agent Core<br/>Claude Agent SDK<br/>Tool Routing via Native Reasoning]
     end
 
     subgraph "Intelligence Layer"
@@ -48,7 +46,7 @@ graph TB
     end
 
     subgraph "Skills & Tools"
-        SKILLS[🛠️ Skill Registry]
+        SKILLS[🛠️ Skills as Tools<br/>Claude picks via description]
         TOOLS[🔧 Tool Executor]
         PLUGINS[🔌 Plugin System]
     end
@@ -74,11 +72,8 @@ graph TB
     API --> GATEWAY
 
     GATEWAY --> AGENT
-    AGENT --> ROUTER
-    ROUTER --> ORCHESTRATOR
-
-    ORCHESTRATOR --> SKILLS
-    ORCHESTRATOR --> TOOLS
+    AGENT --> SKILLS
+    AGENT --> TOOLS
     SKILLS --> PLUGINS
 
     AGENT <--> MEMORY
@@ -113,6 +108,33 @@ graph TB
 | **Initiative** | Reactive only | Proactive + anticipatory |
 | **Learning** | Static | Continuously improving |
 | **Scope** | Single domain | All aspects of your life |
+
+### How Claude Agent SDK Powers Gemi
+
+Gemi leverages Claude's native tool use and reasoning capabilities:
+
+**🎯 Natural Intent Understanding**
+- Claude reads user messages and decides which tools to use based on tool descriptions
+- No separate "intent classifier" needed - Claude's reasoning handles this naturally
+- Can combine multiple skills in one response (e.g., check tasks + calendar + suggest reading)
+
+**🛠️ Skills as Tools**
+- Each skill is registered as a Claude tool with clear description
+- Claude picks the right tools based on:
+  - User's request content
+  - Tool descriptions and parameters
+  - Conversation context and history
+  - Personal profile and patterns
+
+**📖 System Prompt as Guide**
+- System prompt describes each domain (reading, tasks, code, research, etc.)
+- Provides guidelines on when to use which skills
+- Enables Claude to understand multi-domain requests naturally
+
+**🔄 Multi-Step Reasoning**
+- Claude can chain tools together automatically
+- Example: "Help me prepare for tomorrow" → check calendar → check tasks → suggest reading
+- No explicit "orchestrator" needed - Claude handles the workflow
 
 ---
 
@@ -345,6 +367,124 @@ graph TB
     TECHNICAL --> DEBUG
     TECHNICAL --> REVIEW
     TECHNICAL --> DOCS
+```
+
+### How Skills Work with Claude Agent SDK
+
+**Skills are implemented as Claude tools** - Claude automatically routes to them based on:
+1. **Tool descriptions**: Clear, detailed descriptions of what each skill does
+2. **System prompt**: Domain guidelines that help Claude understand when to use which skills
+3. **Context**: Conversation history and user profile inform tool selection
+4. **Claude's reasoning**: Native ability to chain tools for complex tasks
+
+**Example: How Claude Picks Skills**
+
+```python
+# User says: "I'm stressed about my deadline tomorrow"
+
+# Claude's reasoning process (automatic):
+# 1. Analyzes message → detects stress + deadline mention
+# 2. Looks at available tools → sees check_tasks, check_calendar, search_books
+# 3. Decides to chain: check_tasks → check_calendar → search_books (stress relief)
+# 4. Executes tools in sequence
+# 5. Synthesizes response combining all results
+
+# No explicit "intent router" needed - Claude figures it out!
+```
+
+**Implementation Pattern:**
+
+```python
+# Define tools with clear descriptions
+def register_gemi_tools():
+    """Register all Gemi skills as Claude tools"""
+
+    tools = [
+        {
+            "name": "search_books",
+            "description": """Search for books across multiple sources (Google Books, Goodreads).
+
+            Use this when the user:
+            - Asks for book recommendations
+            - Wants to find a specific book
+            - Mentions reading interests
+            - Asks "what should I read?"
+
+            This is part of the READING domain.""",
+            "parameters": {
+                "query": {"type": "string", "required": True},
+                "genre": {"type": "string"},
+                "limit": {"type": "integer", "default": 5}
+            }
+        },
+        {
+            "name": "create_task",
+            "description": """Create a new task with optional deadline and priority.
+
+            Use this when the user:
+            - Says "remind me to..." or "I need to..."
+            - Mentions something they need to do
+            - Asks to create a task or to-do
+            - References a deadline or upcoming task
+
+            This is part of the PRODUCTIVITY domain.""",
+            "parameters": {
+                "title": {"type": "string", "required": True},
+                "due_date": {"type": "string"},
+                "priority": {"type": "string", "enum": ["low", "medium", "high"]}
+            }
+        },
+        {
+            "name": "check_calendar",
+            "description": """Check calendar events for a date range.
+
+            Use this when the user:
+            - Asks about their schedule
+            - Mentions "tomorrow" or "next week"
+            - Wants to know if they're free
+            - References upcoming meetings/events
+
+            This is part of the PRODUCTIVITY domain.""",
+            "parameters": {
+                "start_date": {"type": "string", "required": True},
+                "end_date": {"type": "string"}
+            }
+        }
+    ]
+
+    return tools
+
+# System prompt guides domain understanding
+SYSTEM_PROMPT = """You are Gemi, a multi-domain personal assistant for {user_name}.
+
+## Your Domains
+
+**📚 READING**: Help with books, reading lists, recommendations
+- Use: search_books, track_reading, add_to_reading_list
+
+**📋 PRODUCTIVITY**: Manage tasks, calendar, notes
+- Use: create_task, check_calendar, list_tasks
+
+**🔍 RESEARCH**: Web search, information gathering
+- Use: web_search, research_topic
+
+**💻 CODE**: Programming help and debugging
+- Use: explain_code, debug_code, review_code
+
+## How to Help
+
+1. **Understand the domain** - What is the user asking about?
+2. **Pick relevant tools** - Use tools from that domain
+3. **Chain tools when needed** - Complex requests may need multiple tools
+4. **Personalize** - Use conversation context and user profile
+
+Example multi-domain request:
+"Help me prepare for tomorrow" →
+1. check_calendar (tomorrow) → see what's scheduled
+2. list_tasks (due: tomorrow) → see pending work
+3. search_books (stress relief) → suggest reading if stressed
+
+You naturally decide which tools to use - no explicit routing needed!"""
 ```
 
 ### Core Skills Registry
@@ -838,6 +978,163 @@ TOOLS = {
 }
 ```
 
+### Implementation Example: Agent Core
+
+```python
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+from claude_agent_sdk.types import AssistantMessage, TextBlock, ToolUseBlock
+
+class GemiAgent:
+    """Core Gemi agent using Claude Agent SDK"""
+
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.memory = MemoryManager(user_id)
+        self.tools = self._register_tools()
+
+    def _register_tools(self):
+        """Register all domain tools - Claude will route to them automatically"""
+        return {
+            # Reading domain
+            "search_books": skills.reading.search_books,
+            "track_reading": skills.reading.track_progress,
+            "add_to_list": skills.reading.add_to_list,
+
+            # Tasks domain
+            "create_task": skills.tasks.create_task,
+            "list_tasks": skills.tasks.list_tasks,
+            "complete_task": skills.tasks.complete_task,
+
+            # Calendar domain
+            "check_calendar": skills.calendar.check_schedule,
+            "add_event": skills.calendar.add_event,
+
+            # Research domain
+            "web_search": skills.research.web_search,
+            "research_topic": skills.research.research_topic,
+
+            # Code domain
+            "explain_code": skills.code.explain_code,
+            "debug_code": skills.code.debug,
+        }
+
+    async def process_message(self, message: str) -> str:
+        """Process user message - Claude handles all routing via tool use"""
+
+        # 1. Build context from memory
+        context = await self.memory.build_context()
+        profile = await self.memory.get_profile()
+
+        # 2. Build system prompt with domain guidelines
+        system_prompt = self._build_system_prompt(profile, context)
+
+        # 3. Initialize Claude Agent SDK
+        options = ClaudeAgentOptions(
+            system_prompt=system_prompt,
+            allowed_tools=list(self.tools.keys()),
+            model="claude-3-5-sonnet-20241022"
+        )
+
+        client = ClaudeSDKClient(options)
+        await client.connect()
+
+        # 4. Send message - Claude decides which tools to use
+        await client.query(message)
+
+        # 5. Process Claude's response and tool calls
+        response_text = ""
+        tool_results = []
+
+        async for msg in client.receive_response():
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        response_text += block.text
+
+                    elif isinstance(block, ToolUseBlock):
+                        # Claude chose this tool - execute it
+                        tool_name = block.name
+                        tool_input = block.input
+
+                        print(f"🔧 Claude chose tool: {tool_name}")
+                        result = await self._execute_tool(tool_name, tool_input)
+                        tool_results.append(result)
+
+                        # Feed result back to Claude for next decision
+                        await client.send_tool_result(block.id, result)
+
+        # 6. Store interaction in memory
+        await self.memory.remember_interaction({
+            "user_message": message,
+            "assistant_response": response_text,
+            "tools_used": [r["tool"] for r in tool_results],
+            "timestamp": datetime.now()
+        })
+
+        return response_text
+
+    def _build_system_prompt(self, profile: dict, context: dict) -> str:
+        """Build dynamic system prompt with user context"""
+
+        base_prompt = f"""You are Gemi, a personal AI assistant for {profile['name']}.
+
+## About {profile['name']}
+{self._format_profile(profile)}
+
+## Recent Context
+{self._format_context(context)}
+
+## Your Domains & Tools
+
+**📚 READING**: {profile['name']} loves {", ".join(profile['reading']['genres'])}.
+Use reading tools when they ask about books or reading.
+
+**📋 TASKS**: {profile['name']} is {profile['work']['role']}.
+Use task tools when they mention work or to-dos.
+
+**🔍 RESEARCH**: Use research tools for information gathering.
+**💻 CODE**: Use code tools when they share code or ask programming questions.
+
+## Communication Style
+{profile['preferences']['communication_style']}
+
+You naturally understand which domain a request belongs to and select appropriate tools.
+You can combine multiple domains in a single response when relevant."""
+
+        return base_prompt
+
+    async def _execute_tool(self, tool_name: str, params: dict) -> dict:
+        """Execute a tool chosen by Claude"""
+
+        if tool_name not in self.tools:
+            return {"error": f"Unknown tool: {tool_name}"}
+
+        try:
+            # Execute the tool function
+            tool_func = self.tools[tool_name]
+            result = await tool_func(self.user_id, **params)
+
+            return {
+                "tool": tool_name,
+                "success": True,
+                "result": result
+            }
+
+        except Exception as e:
+            return {
+                "tool": tool_name,
+                "success": False,
+                "error": str(e)
+            }
+```
+
+**Key Points:**
+- ✅ No Intent Router - Claude decides based on tool descriptions
+- ✅ No Task Orchestrator - Claude chains tools naturally
+- ✅ System prompt provides domain guidance
+- ✅ Tool descriptions are the "routing rules"
+- ✅ Claude's reasoning handles complex multi-domain requests
+
 ---
 
 ## 🔄 Request Processing Flow
@@ -849,9 +1146,7 @@ sequenceDiagram
     participant GW as Gateway
     participant CTX as Context Builder
     participant MEM as Memory
-    participant AGENT as Gemi Agent
-    participant ROUTER as Intent Router
-    participant SKILL as Skill Executor
+    participant AGENT as Gemi Agent<br/>(Claude SDK)
     participant TOOL as Tool Executor
     participant EXT as External APIs
 
@@ -864,16 +1159,16 @@ sequenceDiagram
     CTX-->>GW: Enriched context
 
     GW->>AGENT: Process with context
-    AGENT->>ROUTER: Classify intent
-    ROUTER-->>AGENT: Intent + required skills
+    Note over AGENT: Claude analyzes request<br/>& selects tools via reasoning
 
-    loop Agent Reasoning
-        AGENT->>SKILL: Execute skill
-        SKILL->>TOOL: Use tool
+    loop Claude's Multi-Tool Execution
+        AGENT->>TOOL: Execute tool (e.g., search_books)
         TOOL->>EXT: API call
         EXT-->>TOOL: Result
-        TOOL-->>SKILL: Tool output
-        SKILL-->>AGENT: Skill result
+        TOOL-->>AGENT: Tool output
+        Note over AGENT: Claude processes result<br/>& decides next action
+        AGENT->>TOOL: Execute next tool if needed
+        TOOL-->>AGENT: Result
     end
 
     AGENT->>MEM: Store interaction
@@ -1080,21 +1375,22 @@ stateDiagram-v2
     [*] --> Idle
 
     Idle --> Processing: User message
-    Processing --> ContextBuilding: Analyze intent
+    Processing --> LoadContext: Retrieve memories + profile
 
-    ContextBuilding --> DirectResponse: Simple query
-    ContextBuilding --> SkillExecution: Skill needed
-    ContextBuilding --> MultiStep: Complex task
+    LoadContext --> AgentReasoning: Claude processes request
+
+    AgentReasoning --> DirectResponse: Simple query
+    AgentReasoning --> ToolExecution: Tools needed
+    AgentReasoning --> MultiToolChain: Complex task
 
     DirectResponse --> Responding
-    SkillExecution --> ToolUse: Tools needed
-    ToolUse --> SkillExecution: Tool result
-    SkillExecution --> Responding
 
-    MultiStep --> Planning: Create plan
-    Planning --> StepExecution: Execute steps
-    StepExecution --> StepExecution: Next step
-    StepExecution --> Responding: All done
+    ToolExecution --> AgentReasoning: Result → next decision
+    ToolExecution --> Responding: Task complete
+
+    MultiToolChain --> ToolExecution: Execute tool
+    ToolExecution --> MultiToolChain: More tools needed
+    MultiToolChain --> Responding: All tools complete
 
     Responding --> MemoryUpdate: Store interaction
     MemoryUpdate --> Idle
@@ -1103,6 +1399,8 @@ stateDiagram-v2
     ProactiveCheck --> ProactiveMessage: Should notify
     ProactiveCheck --> Idle: No action
     ProactiveMessage --> Idle
+
+    Note right of AgentReasoning: Claude's native reasoning<br/>handles intent classification,<br/>tool selection, and workflow<br/>orchestration automatically
 ```
 
 ---
@@ -1284,17 +1582,19 @@ CREATE INDEX idx_notes_search ON notes USING gin(to_tsvector('english', content)
 ```
 
 ### Phase 3: Skills System (Weeks 5-6)
-**Goal**: Pluggable capabilities
+**Goal**: Multi-domain tool capabilities
 
 ```
-□ Skill framework architecture
-□ Tool executor
-□ Core skills:
-  □ Task manager
-  □ Notes manager
-  □ Reading buddy (port existing)
-  □ Web researcher
-□ Skill discovery (/help)
+□ Tool registration system
+□ Domain-specific tool implementations:
+  □ Task management tools (create_task, list_tasks, complete_task)
+  □ Notes tools (capture_note, search_notes)
+  □ Reading tools (search_books, track_reading) - port existing
+  □ Research tools (web_search, research_topic)
+□ Tool description best practices
+□ System prompt domain guidelines
+□ Multi-tool response handling
+□ Test Claude's tool chaining
 ```
 
 ### Phase 4: Integrations (Weeks 7-8)
@@ -1399,12 +1699,22 @@ gemi/
 │   │   └── middleware/              # Auth, rate limit
 │   │
 │   ├── agent/
-│   │   ├── core.py                  # Gemi Agent
-│   │   ├── router.py                # Intent routing
-│   │   ├── orchestrator.py          # Task orchestration
+│   │   ├── core.py                  # Gemi Agent (Claude SDK)
+│   │   │                            # Claude handles routing via tool descriptions
+│   │   ├── system_prompt.py         # Dynamic system prompt builder
 │   │   ├── tools/                   # Tool implementations
-│   │   ├── skills/                  # Skill implementations
-│   │   └── prompts/                 # Prompt templates
+│   │   │   ├── base.py              # Tool base class
+│   │   │   ├── reading.py           # Reading tools
+│   │   │   ├── tasks.py             # Task management tools
+│   │   │   ├── research.py          # Web research tools
+│   │   │   ├── code.py              # Code assistance tools
+│   │   │   └── calendar.py          # Calendar tools
+│   │   │
+│   │   └── skills/                  # Skill-specific logic
+│   │       ├── reading_buddy.py
+│   │       ├── task_manager.py
+│   │       ├── code_assistant.py
+│   │       └── web_researcher.py
 │   │
 │   ├── memory/
 │   │   ├── manager.py               # Memory orchestrator
@@ -1430,14 +1740,81 @@ gemi/
 │   ├── tasks/                       # Background tasks
 │   └── utils/                       # Utilities
 │
-├── skills/                          # Skill configs (YAML)
 ├── prompts/                         # Prompt templates
+│   ├── base_system.txt              # Core Gemi persona
+│   └── domains/                     # Domain guidelines
+│       ├── reading.txt
+│       ├── tasks.txt
+│       ├── code.txt
+│       └── research.txt
+│
 ├── tests/
 ├── migrations/
 ├── docker/
 ├── scripts/
 └── config/
 ```
+
+---
+
+## 🎨 Why This Architecture?
+
+### Claude-Native Design Advantages
+
+**🚫 What We DON'T Have (and why that's good):**
+
+1. **No Intent Router**
+   - ❌ Traditional approach: Separate ML model classifies intent → routes to skill
+   - ✅ Gemi approach: Claude reads message → understands intent → picks tools
+   - **Benefit**: More flexible, handles ambiguity, understands nuance and context
+
+2. **No Task Orchestrator**
+   - ❌ Traditional approach: Pre-defined workflows, rigid step sequencing
+   - ✅ Gemi approach: Claude reasons about next steps dynamically
+   - **Benefit**: Handles unexpected situations, adapts workflow on the fly
+
+3. **No Manual Command Dispatch**
+   - ❌ Traditional approach: `/task`, `/read`, `/code` strict commands
+   - ✅ Gemi approach: Natural language "I need to finish the report"
+   - **Benefit**: More natural conversation, less cognitive load on user
+
+**✨ What We DO Have:**
+
+1. **Smart Tool Descriptions**: Each tool clearly describes when to use it
+2. **Rich System Prompt**: Domain guidelines help Claude understand context
+3. **Memory Context**: Past interactions inform tool selection
+4. **Claude's Reasoning**: Native ability to chain tools and handle complexity
+
+**Example: Multi-Domain Request**
+
+```
+User: "I'm stressed about tomorrow's presentation"
+
+Traditional bot with router:
+1. Intent classifier: "task_query" (misses stress + reading context)
+2. Routes to task_manager skill only
+3. Lists tasks for tomorrow
+4. Misses opportunity to help with stress or suggest preparation
+
+Gemi with Claude's native routing:
+1. Claude understands: stress + presentation + tomorrow
+2. Reasons: check calendar → check tasks → assess prep status → suggest stress relief
+3. Uses 4 tools: check_calendar, list_tasks, check_document_status, search_books
+4. Synthesizes: "You have 3 hours free tonight, 2 slides left, here's a calming book"
+5. Proactively helpful across multiple domains
+```
+
+**When would you need an explicit router?**
+- Sub-50ms latency requirement (Gemi doesn't need this)
+- Extreme cost optimization (premature for MVP)
+- Specialized lightweight models (unnecessary with Claude's capability)
+
+For Gemi, Claude's native routing is **superior** because:
+- 🧠 Better contextual understanding
+- 🔗 Natural tool chaining
+- 🎯 Handles multi-domain requests
+- 🛠️ Easy to add new tools (just add description)
+- 📈 Improves as Claude improves
 
 ---
 
