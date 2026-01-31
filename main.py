@@ -2,13 +2,15 @@ import os
 import logging
 import json
 import datetime
-import pytz
-import random
 from collections import Counter
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, ContextTypes, CommandHandler, MessageHandler, filters
 from agent import process_message
+
+# Import scheduler
+from scheduler.service import CronService, set_cron_service
+from scheduler.executor import set_executor_deps, execute_cron_job
 
 load_dotenv()
 
@@ -173,83 +175,52 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await context.bot.send_message(chat_id=chat_id, text=response)
 
-async def send_morning_message(context: ContextTypes.DEFAULT_TYPE):
+async def post_init(application: Application):
+    """Initialize scheduler after application is ready."""
     config = load_config()
-    chat_id = config.get('chat_id')
-    
-    if not chat_id:
-        logging.warning("No chat_id found in config, cannot send morning message.")
-        return
 
-    # Ask Agent to generate the morning digest
-    prompt = (
-        "Look at the reading list. Pick the TOP 3 unread items. "
-        "Generate a morning digest. For each item include: Title, Type, Tags, "
-        "and a 1-sentence 'Why you should read this'. Format it nicely with emojis. "
-        "Start with 'Good morning! Here is your daily reading digest:'"
-    )
-    response = await process_message(prompt, chat_id)
-    await context.bot.send_message(chat_id=chat_id, text=response)
+    # Helper to get chat_id
+    def get_chat_id():
+        return config.get('chat_id')
 
-async def send_hydration_reminder(context: ContextTypes.DEFAULT_TYPE):
-    config = load_config()
-    chat_id = config.get('chat_id')
-    if not chat_id: return
+    # Helper to send message
+    async def send_message(chat_id, text):
+        await application.bot.send_message(chat_id=chat_id, text=text)
 
-    # Ask Agent to generate the message
-    prompt = (
-        "Generate a short, witty reminder to drink water. "
-        "ALSO, check the reading list and casually suggest ONE short or interesting item to read while hydrating. "
-        "If the list is empty, just focus on the water."
-    )
-    response = await process_message(prompt, chat_id)
-    await context.bot.send_message(chat_id=chat_id, text=response)
+    # Set up executor dependencies
+    set_executor_deps(process_message, send_message, get_chat_id)
 
-async def send_checkin(context: ContextTypes.DEFAULT_TYPE):
-    config = load_config()
-    chat_id = config.get('chat_id')
-    if not chat_id: return
+    # Create and start cron service
+    cron_service = CronService(store_path="cron_jobs.json")
+    cron_service.set_executor(execute_cron_job)
+    cron_service.set_job_queue(application.job_queue)
+    cron_service.start()
 
-    # Ask Agent to generate the message
-    prompt = "Look at the reading list. Pick ONE unread item. Generate a motivating message to read it NOW. Include the title, type, tags, and reasonable length reasoning. make it sound like a friend. If list is empty, congratulate me."
-    response = await process_message(prompt, chat_id)
-    await context.bot.send_message(chat_id=chat_id, text=response)
+    # Make service globally available
+    set_cron_service(cron_service)
+
+    logging.info("Scheduler initialized")
+
 
 if __name__ == '__main__':
     token = os.getenv('TELEGRAM_BOT_TOKEN')
     if not token:
         print("Error: TELEGRAM_BOT_TOKEN not found in .env")
         exit(1)
-        
-    application = Application.builder().token(token).build()
-    
+
+    application = Application.builder().token(token).post_init(post_init).build()
+
     start_handler = CommandHandler('start', start)
     stats_handler = CommandHandler('stats', stats_command)
     streak_handler = CommandHandler('streak', streak_command)
-    
+
     # Allow text AND photos
     message_handler = MessageHandler((filters.TEXT | filters.PHOTO) & (~filters.COMMAND), handle_message)
-    
+
     application.add_handler(start_handler)
     application.add_handler(stats_handler)
     application.add_handler(streak_handler)
     application.add_handler(message_handler)
-    
-    # Schedule morning message
-    job_queue = application.job_queue
-    # 10:00 AM IST - Morning Digest
-    time_morning = datetime.time(hour=10, minute=0, tzinfo=pytz.timezone('Asia/Kolkata'))
-    job_queue.run_daily(send_morning_message, time=time_morning)
 
-    # Hydration Reminders (11 AM, 2 PM, 5 PM, 8 PM)
-    hydration_times = [11, 14, 17, 20]
-    for hour in hydration_times:
-        t = datetime.time(hour=hour, minute=0, tzinfo=pytz.timezone('Asia/Kolkata'))
-        job_queue.run_daily(send_hydration_reminder, time=t)
-
-    # Afternoon Check-in (3:30 PM)
-    time_checkin = datetime.time(hour=15, minute=30, tzinfo=pytz.timezone('Asia/Kolkata'))
-    job_queue.run_daily(send_checkin, time=time_checkin)
-    
     print("Bot is running...")
     application.run_polling()

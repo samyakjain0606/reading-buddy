@@ -3,11 +3,13 @@ import json
 import os
 import shutil
 import datetime
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ClaudeSDKClient
+from claude_agent_sdk import ClaudeAgentOptions, AssistantMessage, TextBlock, ToolUseBlock, ToolResultBlock, ClaudeSDKClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Import scheduler MCP server
+from scheduler.mcp_tools import create_scheduler_mcp_server
 
 # Remove ANTHROPIC_API_KEY if it's the placeholder, as it conflicts with 'claude login'
 if os.getenv('ANTHROPIC_API_KEY') == 'your_anthropic_api_key':
@@ -21,36 +23,57 @@ if not os.path.exists('reading_list.json'):
     with open('reading_list.json', 'w') as f:
         json.dump([], f)
 
+# Create scheduler MCP server (singleton)
+SCHEDULER_MCP_SERVER = create_scheduler_mcp_server()
+
+# Tools configuration
+ALLOWED_TOOLS = [
+    "Read", "Write", "Edit", "WebFetch",
+    "mcp__scheduler__cron_list",
+    "mcp__scheduler__cron_add",
+    "mcp__scheduler__cron_remove",
+    "mcp__scheduler__cron_update"
+]
+
 # Global dictionary to store sessions: {chat_id: {'client': ClaudeSDKClient, 'turn_count': int}}
 SESSIONS = {}
 TURN_LIMIT = 20
 
+
+def create_agent_options(system_prompt: str, cli_path: str) -> ClaudeAgentOptions:
+    """Create ClaudeAgentOptions with scheduler MCP server."""
+    return ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        allowed_tools=ALLOWED_TOOLS,
+        mcp_servers={"scheduler": SCHEDULER_MCP_SERVER},
+        permission_mode="acceptEdits",
+        cwd="/Users/sjain/gemi",
+        max_turns=10,
+        cli_path=cli_path
+    )
+
+
 async def get_or_create_session(chat_id, system_prompt, cli_path):
     if chat_id not in SESSIONS:
-        logger.info(f"Creating new session for chat_id {chat_id}")
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            allowed_tools=["Read", "Write", "Edit", "WebFetch"],
-            permission_mode="acceptEdits",
-            cwd="/Users/sjain/reading-buddy",
-            max_turns=10,  # Max turns per single request (not session)
-            cli_path=cli_path
-        )
+        logger.info(f"🆕 Creating NEW session for chat_id {chat_id}")
+        options = create_agent_options(system_prompt, cli_path)
         client = ClaudeSDKClient(options)
         await client.connect()
         SESSIONS[chat_id] = {'client': client, 'turn_count': 0}
-    
+    else:
+        logger.info(f"♻️  REUSING existing session for chat_id {chat_id} (turn #{SESSIONS[chat_id]['turn_count'] + 1})")
+
     return SESSIONS[chat_id]
+
 
 async def compact_session(chat_id, session):
     client = session['client']
     logger.info(f"Compacting session for chat_id {chat_id} (turns > {TURN_LIMIT})")
-    
+
     # 1. Summarize
     summary_prompt = "CRITICAL: Summarize our current conversation state, known user preferences, and any unfinished tasks in 2-3 sentences. Do not add any conversational filler."
     summary = ""
     try:
-        # Use a temporary query for summary
         await client.query(summary_prompt)
         async for message in client.receive_response():
             if isinstance(message, AssistantMessage):
@@ -69,11 +92,10 @@ async def compact_session(chat_id, session):
     except Exception as e:
         logger.error(f"Error disconnecting client: {e}")
 
-    # 3. Create NEW client
-    # Re-read system prompt components as they might have changed
+    # 3. Create NEW client with fresh system prompt
     reading_list_path = os.path.abspath('reading_list.json')
     current_time = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    
+
     try:
         with open('system_prompt.txt', 'r') as f:
             template = f.read()
@@ -84,24 +106,15 @@ async def compact_session(chat_id, session):
     except:
         base_prompt = f"You are a helpful assistant. The current time is {current_time}."
 
-    # Inject summary into new system prompt or as first message context
+    # Inject summary into new system prompt
     new_system_prompt = f"{base_prompt}\n\n[PREVIOUS CONVERSATION SUMMARY]: {summary}"
-    
-    # Re-use the same CLI path discovery logic (simplified here as we pass it in usually, but need to re-fetch)
+
     cli_path = shutil.which("claude") or "/Users/sjain/.nvm/versions/node/v22.20.0/bin/claude"
-    
-    options = ClaudeAgentOptions(
-        system_prompt=new_system_prompt,
-        allowed_tools=["Read", "Write", "Edit", "WebFetch"],
-        permission_mode="acceptEdits",
-        cwd="/Users/sjain/reading-buddy",
-        max_turns=10,
-        cli_path=cli_path
-    )
-    
+
+    options = create_agent_options(new_system_prompt, cli_path)
     new_client = ClaudeSDKClient(options)
     await new_client.connect()
-    
+
     # Update session
     SESSIONS[chat_id] = {'client': new_client, 'turn_count': 0}
     logger.info(f"Session compacted and reset for chat_id {chat_id}")
@@ -134,13 +147,12 @@ async def process_message(user_message, chat_id, image_path=None):
 
     # Get or create session
     session = await get_or_create_session(chat_id, system_prompt, cli_path)
-    
+
     # Check for compaction
     if session['turn_count'] >= TURN_LIMIT:
         await session['client'].query("Hold on, my memory is getting full. Organizing my thoughts...")
-        # Consume this response
-        async for _ in session['client'].receive_response(): pass 
-        
+        async for _ in session['client'].receive_response():
+            pass
         session = await compact_session(chat_id, session)
 
     client = session['client']
@@ -168,7 +180,7 @@ async def process_message(user_message, chat_id, image_path=None):
                         logger.info(f"Tool result: {block.content} (is_error={block.is_error})")
                     else:
                         logger.info(f"Agent generated block type: {type(block)}")
-                        
+
         logger.info(f"Agent response for chat_id {chat_id}: {final_response}")
 
     except Exception as e:

@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "jobs": [
+    {
+      "id": "edda5e40",
+      "name": "Water reminder (11:00)",
+      "prompt": "Generate a short, witty reminder to drink water. ALSO, check the reading list and casually suggest ONE short or interesting item to read while hydrating. If the list is empty, just focus on the water.",
+      "schedule": {
+        "kind": "cron",
+        "at_ms": null,
+        "every_ms": null,
+        "expr": "0 11 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "enabled": true,
+      "delete_after_run": false,
+      "created_at_ms": 1769805261150,
+      "state": {
+        "next_run_at_ms": 1769923800000,
+        "last_run_at_ms": null,
+        "last_status": null,
+        "last_error": null
+      }
+    },
+    {
+      "id": "4e07dffc",
+      "name": "Water reminder (14:00)",
+      "prompt": "Generate a short, witty reminder to drink water. ALSO, check the reading list and casually suggest ONE short or interesting item to read while hydrating. If the list is empty, just focus on the water.",
+      "schedule": {
+        "kind": "cron",
+        "at_ms": null,
+        "every_ms": null,
+        "expr": "0 14 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "enabled": true,
+      "delete_after_run": false,
+      "created_at_ms": 1769805261150,
+      "state": {
+        "next_run_at_ms": 1769848200000,
+        "last_run_at_ms": null,
+        "last_status": null,
+        "last_error": null
+      }
+    },
+    {
+      "id": "afa83398",
+      "name": "Water reminder (17:00)",
+      "prompt": "Generate a short, witty reminder to drink water. ALSO, check the reading list and casually suggest ONE short or interesting item to read while hydrating. If the list is empty, just focus on the water.",
+      "schedule": {
+        "kind": "cron",
+        "at_ms": null,
+        "every_ms": null,
+        "expr": "0 17 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "enabled": true,
+      "delete_after_run": false,
+      "created_at_ms": 1769805261150,
+      "state": {
+        "next_run_at_ms": 1769859000000,
+        "last_run_at_ms": null,
+        "last_status": null,
+        "last_error": null
+      }
+    },
+    {
+      "id": "86aa51c0",
+      "name": "Water reminder (20:00)",
+      "prompt": "Generate a short, witty reminder to drink water. ALSO, check the reading list and casually suggest ONE short or interesting item to read while hydrating. If the list is empty, just focus on the water.",
+      "schedule": {
+        "kind": "cron",
+        "at_ms": null,
+        "every_ms": null,
+        "expr": "0 20 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "enabled": true,
+      "delete_after_run": false,
+      "created_at_ms": 1769805261150,
+      "state": {
+        "next_run_at_ms": 1769869800000,
+        "last_run_at_ms": null,
+        "last_status": null,
+        "last_error": null
+      }
+    },
+    {
+      "id": "5cd2b258",
+      "name": "Afternoon check-in",
+      "prompt": "Look at the reading list. Pick ONE unread item. Generate a motivating message to read it NOW. Include the title, type, tags, and reasonable length reasoning. make it sound like a friend. If list is empty, congratulate me.",
+      "schedule": {
+        "kind": "cron",
+        "at_ms": null,
+        "every_ms": null,
+        "expr": "30 15 * * *",
+        "tz": "Asia/Kolkata"
+      },
+      "enabled": true,
+      "delete_after_run": false,
+      "created_at_ms": 1769805261150,
+      "state": {
+        "next_run_at_ms": 1769853600000,
+        "last_run_at_ms": null,
+        "last_status": null,
+        "last_error": null
+      }
+    }
+  ]
+}
